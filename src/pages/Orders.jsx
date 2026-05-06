@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { rtdb } from '../firebase';
+import { ref, get, update } from 'firebase/database';
 
 export default function Orders() {
   const [orders, setOrders] = useState([]);
@@ -13,12 +13,21 @@ export default function Orders() {
 
   const fetchOrders = async () => {
     try {
-      const querySnapshot = await getDocs(collection(db, 'orders'));
-      const orderData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setOrders(orderData);
+      const ordersRef = ref(rtdb, 'orders');
+      const snapshot = await get(ordersRef);
+      
+      if (snapshot.exists()) {
+        const orderData = [];
+        snapshot.forEach((childSnapshot) => {
+          orderData.push({
+            id: childSnapshot.key,
+            ...childSnapshot.val()
+          });
+        });
+        setOrders(orderData);
+      } else {
+        setOrders([]);
+      }
     } catch (error) {
       console.error("Error fetching orders:", error);
     } finally {
@@ -29,7 +38,7 @@ export default function Orders() {
   const handleStatusChange = async (orderId, newStatus) => {
     try {
       setUpdatingId(orderId);
-      await updateDoc(doc(db, 'orders', orderId), {
+      await update(ref(rtdb, 'orders/' + orderId), {
         status: newStatus
       });
       

@@ -5,15 +5,19 @@ export default function Sidebar() {
   const { userRole } = useAuth();
   const location = useLocation();
 
-  const navigation = [
-    { name: 'Dashboard', href: '/dashboard' },
-    { name: 'Products', href: '/products' },
-    { name: 'Orders', href: '/orders' },
-  ];
-
-  if (userRole === 'super_admin') {
-    navigation.push({ name: 'Admins', href: '/admins' });
-  }
+  // Super admin only manages admins; regular admin manages the store
+  const navigation = userRole === 'super_admin'
+    ? [
+        { name: 'Dashboard', href: '/dashboard' },
+        { name: 'Admins',    href: '/admins' },
+      ]
+    : [
+        { name: 'Dashboard',  href: '/dashboard' },
+        { name: 'Categories', href: '/categories' },
+        { name: 'Products',   href: '/products' },
+        { name: 'Customers',  href: '/customers' },
+        { name: 'Orders',     href: '/orders' },
+      ];
 
   return (
     <div className="flex flex-col w-64 bg-white border-r border-gray-200 h-full">

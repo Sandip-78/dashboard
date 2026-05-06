@@ -2,7 +2,9 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Admins from './pages/Admins';
+import Categories from './pages/Categories';
 import Products from './pages/Products';
+import Customers from './pages/Customers';
 import Orders from './pages/Orders';
 import ProtectedRoute from './components/ProtectedRoute';
 import RoleRoute from './components/RoleRoute';
@@ -22,7 +24,9 @@ function App() {
           </ProtectedRoute>
         }>
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/categories" element={<Categories />} />
           <Route path="/products" element={<Products />} />
+          <Route path="/customers" element={<Customers />} />
           <Route path="/orders" element={<Orders />} />
           
           <Route path="/admins" element={

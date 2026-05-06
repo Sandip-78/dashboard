@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { rtdb } from '../firebase';
+import { ref, get, push, set, update, remove } from 'firebase/database';
 
 export default function Products() {
   const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [filterCategory, setFilterCategory] = useState('');
   
   // Form State
   const [editingId, setEditingId] = useState(null);
@@ -13,51 +15,84 @@ export default function Products() {
   const [price, setPrice] = useState('');
   const [stock, setStock] = useState('');
   const [image, setImage] = useState('');
+  const [categoryId, setCategoryId] = useState('');
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
 
   useEffect(() => {
-    fetchProducts();
+    fetchData();
   }, []);
 
-  const fetchProducts = async () => {
+  const fetchData = async () => {
+    setLoading(true);
     try {
-      const querySnapshot = await getDocs(collection(db, 'products'));
-      const productData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setProducts(productData);
+      const [productsSnap, categoriesSnap] = await Promise.all([
+        get(ref(rtdb, 'products')),
+        get(ref(rtdb, 'category'))
+      ]);
+      
+      const catData = [];
+      if (categoriesSnap.exists()) {
+        categoriesSnap.forEach(child => {
+          catData.push({ id: child.key, ...child.val() });
+        });
+      }
+      setCategories(catData);
+
+      const prodData = [];
+      if (productsSnap.exists()) {
+        productsSnap.forEach(child => {
+          prodData.push({ id: child.key, ...child.val() });
+        });
+      }
+      setProducts(prodData);
     } catch (error) {
-      console.error("Error fetching products:", error);
+      console.error("Error fetching data:", error);
     } finally {
       setLoading(false);
     }
   };
 
+  const getCategoryName = (id) => {
+    const cat = categories.find(c => c.id === id);
+    return cat ? cat.category_title : 'Unknown Category';
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setFormError('');
+    
+    if (!categoryId) {
+      setFormError('Please select a category for this product.');
+      return;
+    }
+
     setFormLoading(true);
 
     try {
       const productData = {
-        name,
-        price: Number(price),
-        stock: Number(stock),
-        image: image || ''
+        product_name: name,
+        product_price: Number(price),
+        product_quantity: Number(stock),
+        product_image: image || '',
+        category_id: categoryId,
+        category_name: getCategoryName(categoryId)
       };
 
       if (editingId) {
         // Update existing product
-        await updateDoc(doc(db, 'products', editingId), productData);
+        await update(ref(rtdb, 'products/' + editingId), productData);
       } else {
         // Create new product
-        await addDoc(collection(db, 'products'), productData);
+        const newProdRef = push(ref(rtdb, 'products'));
+        await set(newProdRef, {
+            ...productData,
+            product_id: newProdRef.key
+        });
       }
 
       resetForm();
-      fetchProducts();
+      fetchData();
     } catch (error) {
       console.error("Error saving product:", error);
       setFormError(error.message);
@@ -68,18 +103,19 @@ export default function Products() {
 
   const handleEdit = (product) => {
     setEditingId(product.id);
-    setName(product.name || '');
-    setPrice(product.price || '');
-    setStock(product.stock || '');
-    setImage(product.image || '');
+    setName(product.product_name || '');
+    setPrice(product.product_price || '');
+    setStock(product.product_quantity || '');
+    setImage(product.product_image || '');
+    setCategoryId(product.category_id || '');
     setShowForm(true);
   };
 
   const handleDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this product?")) {
       try {
-        await deleteDoc(doc(db, 'products', id));
-        fetchProducts();
+        await remove(ref(rtdb, 'products/' + id));
+        fetchData();
       } catch (error) {
         console.error("Error deleting product:", error);
         alert("Failed to delete product.");
@@ -94,8 +130,13 @@ export default function Products() {
     setPrice('');
     setStock('');
     setImage('');
+    setCategoryId('');
     setFormError('');
   };
+
+  const filteredProducts = filterCategory 
+    ? products.filter(p => p.category_id === filterCategory)
+    : products;
 
   return (
     <div className="space-y-6">
@@ -129,6 +170,21 @@ export default function Products() {
                   onChange={(e) => setName(e.target.value)}
                 />
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <select
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-[#2563EB] focus:border-[#2563EB]"
+                  value={categoryId}
+                  onChange={(e) => setCategoryId(e.target.value)}
+                >
+                  <option value="">Select a category</option>
+                  {categories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.category_title}</option>
+                  ))}
+                </select>
+              </div>
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Price ($)</label>
@@ -144,7 +200,7 @@ export default function Products() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Stock</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
                 <input
                   type="number"
                   min="0"
@@ -155,7 +211,7 @@ export default function Products() {
                 />
               </div>
 
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Image URL</label>
                 <input
                   type="url"
@@ -188,30 +244,51 @@ export default function Products() {
       )}
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        {/* Filter Bar */}
+        <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <label className="text-sm font-medium text-gray-700">Filter by Category:</label>
+            <select
+              className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-[#2563EB] focus:border-[#2563EB] bg-white w-48"
+              value={filterCategory}
+              onChange={(e) => setFilterCategory(e.target.value)}
+            >
+              <option value="">All Categories</option>
+              {categories.map(cat => (
+                <option key={cat.id} value={cat.id}>{cat.category_title}</option>
+              ))}
+            </select>
+          </div>
+          <div className="text-sm text-gray-500">
+            Showing {filteredProducts.length} product(s)
+          </div>
+        </div>
+
         <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+          <thead className="bg-white">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {loading ? (
               <tr>
-                <td colSpan="4" className="px-6 py-4 text-center text-sm text-gray-500">Loading...</td>
+                <td colSpan="5" className="px-6 py-4 text-center text-sm text-gray-500">Loading...</td>
               </tr>
-            ) : products.length === 0 ? (
+            ) : filteredProducts.length === 0 ? (
               <tr>
-                <td colSpan="4" className="px-6 py-8 text-center text-sm text-gray-500">No products found. Click "Add Product" to create one.</td>
+                <td colSpan="5" className="px-6 py-8 text-center text-sm text-gray-500">No products found for this category.</td>
               </tr>
             ) : (
-              products.map((product) => (
+              filteredProducts.map((product) => (
                 <tr key={product.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 flex items-center space-x-3">
-                    {product.image ? (
-                      <img src={product.image} alt={product.name} className="h-10 w-10 rounded-md object-cover border border-gray-200 shadow-sm" />
+                    {product.product_image ? (
+                      <img src={product.product_image} alt={product.product_name} className="h-10 w-10 rounded-md object-cover border border-gray-200 shadow-sm" />
                     ) : (
                       <div className="h-10 w-10 rounded-md bg-gray-100 border border-gray-200 flex items-center justify-center text-gray-400">
                         <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -219,14 +296,19 @@ export default function Products() {
                         </svg>
                       </div>
                     )}
-                    <span>{product.name}</span>
+                    <span>{product.product_name}</span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${Number(product.price).toFixed(2)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
+                      {getCategoryName(product.category_id)}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${Number(product.product_price).toFixed(2)}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     <span className={`px-2.5 py-0.5 inline-flex text-xs font-semibold rounded-full ${
-                      product.stock > 10 ? 'bg-green-100 text-green-800' : product.stock > 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-[#DC2626]'
+                      product.product_quantity > 10 ? 'bg-green-100 text-green-800' : product.product_quantity > 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-[#DC2626]'
                     }`}>
-                      {product.stock} in stock
+                      {product.product_quantity} in stock
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">

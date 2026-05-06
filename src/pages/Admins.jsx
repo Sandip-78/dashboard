@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { db, secondaryAuth } from '../firebase';
-import { collection, getDocs, doc, setDoc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { rtdb, secondaryAuth } from '../firebase';
+import { ref, get, set, update, remove, serverTimestamp } from 'firebase/database';
 import { createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 
 export default function Admins() {
@@ -23,12 +23,16 @@ export default function Admins() {
 
   const fetchAdmins = async () => {
     try {
-      const querySnapshot = await getDocs(collection(db, 'users'));
-      const adminData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setAdmins(adminData);
+      const snapshot = await get(ref(rtdb, 'admins'));
+      if (snapshot.exists()) {
+        const adminData = [];
+        snapshot.forEach((child) => {
+          adminData.push({ id: child.key, ...child.val() });
+        });
+        setAdmins(adminData);
+      } else {
+        setAdmins([]);
+      }
     } catch (error) {
       console.error("Error fetching admins:", error);
     } finally {
@@ -40,43 +44,22 @@ export default function Admins() {
     e.preventDefault();
     setFormError('');
     setFormLoading(true);
-
     try {
       if (editingId) {
-        // Update existing admin
-        await updateDoc(doc(db, 'users', editingId), {
-          name,
-          role
-        });
+        await update(ref(rtdb, 'admins/' + editingId), { name, role });
       } else {
-        // Create new admin
-        if (!password) {
-          setFormError('Password is required for new users');
-          setFormLoading(false);
-          return;
-        }
-        
-        // Use secondary auth to create user without logging out the current admin
-        const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-        const newUser = userCredential.user;
-        
-        // Add to Firestore
-        await setDoc(doc(db, 'users', newUser.uid), {
-          name,
-          email,
-          role,
+        if (!password) { setFormError('Password is required'); setFormLoading(false); return; }
+        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+        await set(ref(rtdb, 'admins/' + cred.user.uid), {
+          name, email, role,
+          isActive: true,
           created_at: serverTimestamp()
         });
-        
-        // Sign out from secondary auth
         await signOut(secondaryAuth);
       }
-
-      // Reset form and refresh list
       resetForm();
       fetchAdmins();
     } catch (error) {
-      console.error("Error saving admin:", error);
       setFormError(error.message);
     } finally {
       setFormLoading(false);
@@ -86,44 +69,47 @@ export default function Admins() {
   const handleEdit = (admin) => {
     setEditingId(admin.id);
     setName(admin.name || '');
-    setEmail(admin.email);
-    setRole(admin.role);
-    setPassword(''); // Password cannot be edited here for security
+    setEmail(admin.email || '');
+    setRole(admin.role || 'admin');
+    setPassword('');
     setShowForm(true);
   };
 
+  const handleToggleActive = async (admin) => {
+    try {
+      await update(ref(rtdb, 'admins/' + admin.id), { isActive: !(admin.isActive !== false) });
+      fetchAdmins();
+    } catch (error) {
+      alert("Failed to update status.");
+    }
+  };
+
   const handleDelete = async (id) => {
-    if (window.confirm("Are you sure you want to disable this admin? Their access will be revoked.")) {
+    if (window.confirm("Permanently remove this admin?")) {
       try {
-        await deleteDoc(doc(db, 'users', id));
+        await remove(ref(rtdb, 'admins/' + id));
         fetchAdmins();
       } catch (error) {
-        console.error("Error deleting admin:", error);
-        alert("Failed to delete admin.");
+        alert("Failed to remove admin.");
       }
     }
   };
 
   const resetForm = () => {
-    setShowForm(false);
-    setEditingId(null);
-    setName('');
-    setEmail('');
-    setPassword('');
-    setRole('admin');
-    setFormError('');
+    setShowForm(false); setEditingId(null); setName('');
+    setEmail(''); setPassword(''); setRole('admin'); setFormError('');
   };
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">Admin Management</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Admin Management</h1>
+          <p className="mt-1 text-sm text-gray-500">Manage all admins who have access to the store dashboard.</p>
+        </div>
         <button
-          onClick={() => {
-            resetForm();
-            setShowForm(true);
-          }}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+          onClick={() => { resetForm(); setShowForm(true); }}
+          className="bg-[#2563EB] hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors shadow-sm"
         >
           Add New Admin
         </button>
@@ -131,73 +117,46 @@ export default function Admins() {
 
       {showForm && (
         <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h2 className="text-lg font-medium mb-4">{editingId ? 'Edit Admin' : 'Add New Admin'}</h2>
+          <h2 className="text-lg font-medium mb-4 text-[#111827]">{editingId ? 'Edit Admin' : 'Add New Admin'}</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {formError && <div className="text-red-600 text-sm">{formError}</div>}
-            
+            {formError && <div className="text-[#DC2626] bg-red-50 p-2 rounded text-sm">{formError}</div>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                <input
-                  type="text"
-                  required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                <input type="text" required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-[#2563EB] focus:border-[#2563EB]"
+                  value={name} onChange={(e) => setName(e.target.value)} />
               </div>
-              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                <input
-                  type="email"
-                  required
-                  disabled={!!editingId}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
+                <input type="email" required disabled={!!editingId}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-[#2563EB] focus:border-[#2563EB] disabled:bg-gray-100 disabled:text-gray-500"
+                  value={email} onChange={(e) => setEmail(e.target.value)} />
               </div>
-              
               {!editingId && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                  <input
-                    type="password"
-                    required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
+                  <input type="password" required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-[#2563EB] focus:border-[#2563EB]"
+                    value={password} onChange={(e) => setPassword(e.target.value)} />
                 </div>
               )}
-              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                <select
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                >
+                <select className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-[#2563EB] focus:border-[#2563EB]"
+                  value={role} onChange={(e) => setRole(e.target.value)}>
                   <option value="admin">Admin</option>
                   <option value="super_admin">Super Admin</option>
                 </select>
               </div>
             </div>
-            
-            <div className="flex justify-end space-x-3 pt-4">
-              <button
-                type="button"
-                onClick={resetForm}
-                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
+            <div className="flex justify-end space-x-3 pt-4 border-t mt-4 border-gray-100">
+              <button type="button" onClick={resetForm}
+                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
                 Cancel
               </button>
-              <button
-                type="submit"
-                disabled={formLoading}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:bg-blue-400"
-              >
+              <button type="submit" disabled={formLoading}
+                className="px-4 py-2 bg-[#2563EB] text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:bg-blue-400 transition-colors">
                 {formLoading ? 'Saving...' : 'Save Admin'}
               </button>
             </div>
@@ -212,36 +171,55 @@ export default function Admins() {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {loading ? (
-              <tr>
-                <td colSpan="4" className="px-6 py-4 text-center text-sm text-gray-500">Loading...</td>
-              </tr>
+              <tr><td colSpan="5" className="px-6 py-8 text-center text-sm text-gray-500">Loading...</td></tr>
             ) : admins.length === 0 ? (
-              <tr>
-                <td colSpan="4" className="px-6 py-4 text-center text-sm text-gray-500">No admins found</td>
-              </tr>
+              <tr><td colSpan="5" className="px-6 py-8 text-center text-sm text-gray-500">No admins found.</td></tr>
             ) : (
-              admins.map((admin) => (
-                <tr key={admin.id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{admin.name}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{admin.email}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      admin.role === 'super_admin' ? 'bg-purple-100 text-purple-800' : 'bg-green-100 text-green-800'
-                    }`}>
-                      {admin.role.replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <button onClick={() => handleEdit(admin)} className="text-blue-600 hover:text-blue-900 mr-4">Edit</button>
-                    <button onClick={() => handleDelete(admin.id)} className="text-red-600 hover:text-red-900">Disable</button>
-                  </td>
-                </tr>
-              ))
+              admins.map((admin) => {
+                const isActive = admin.isActive !== false;
+                return (
+                  <tr key={admin.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {admin.name || '—'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{admin.email}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2.5 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        admin.role === 'super_admin'
+                          ? 'bg-purple-100 text-purple-800'
+                          : 'bg-blue-100 text-blue-800'
+                      }`}>
+                        {admin.role === 'super_admin' ? 'Super Admin' : 'Admin'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {/* Clicking toggles Active ↔ Inactive */}
+                      <button
+                        onClick={() => handleToggleActive(admin)}
+                        title="Click to toggle status"
+                        className={`px-3 py-1 inline-flex items-center gap-1.5 text-xs font-semibold rounded-full transition-all ${
+                          isActive
+                            ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                            : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-400'}`} />
+                        {isActive ? 'Active' : 'Inactive'}
+                      </button>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-4">
+                      <button onClick={() => handleEdit(admin)} className="text-[#2563EB] hover:text-blue-900 transition-colors">Edit</button>
+                      <button onClick={() => handleDelete(admin.id)} className="text-[#DC2626] hover:text-red-900 transition-colors">Remove</button>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
